@@ -9,50 +9,44 @@
 
 void Get_path(char *path, const char *pid)
 {
-  if (path == NULL)
-  { 
-    ERROR("got NULL path");
-    return;
-  }
-
-  if (pid == NULL)
-  { 
-    ERROR("got NULL pid");
-    return;
-  }
-
   sprintf(path, "/proc/%s/fd", pid);
   return;
 }
 
 void Print_data(const char *path)
 {
-  if (path == NULL)
-  { 
-    ERROR("got NULL path");
-    return;
-  }
+  int dir_fd = open(path, O_RDONLY);
+  ERROR_CHECK(dir_fd == -1);
 
-  ERROR_CHECKING(int dir_fd = open(path, O_RDONLY));
-  ERROR_CHECKING(DIR *proc_dir = fdopendir(dir_fd));
-  ERROR_CHECKING(struct dirent *dir = readdir(proc_dir));
-	
-  printf("Size   IID   UID Name\n");
+  DIR *proc_dir = fdopendir(dir_fd);
+  ERROR_CHECK(proc_dir == NULL);
+
+  errno = 0;
+  struct dirent *dir = readdir(proc_dir);
+  ERROR_CHECK(dir == NULL && errno != 0);
+
+  printf("  Size    IID    UID Name\n");
   while(dir != NULL)
   {
     if (dir->d_type == DT_LNK)
     {
       char buf[PATH_MAX]{0};
-      ERROR_CHECKING(readlinkat(dir_fd, dir->d_name, buf, PATH_MAX));
+
+      ssize_t result_readlinkat = readlinkat(dir_fd, dir->d_name, buf, PATH_MAX);
+      ERROR_CHECK(result_readlinkat == -1);
 
       struct stat node_stat;
-      ERROR_CHECKING(fstatat(dir_fd, dir->d_name, &node_stat, 0));
+      int result_fstatat = fstatat(dir_fd, dir->d_name, &node_stat, 0);
+      ERROR_CHECK(result_fstatat == -1)
+      
       printf("%6ld %6ld %6d %s\n", node_stat.st_size, node_stat.st_ino, node_stat.st_uid, buf);
     }
+    errno = 0;
     dir = readdir(proc_dir);
+    ERROR_CHECK(dir == NULL && errno != 0);
   }
-
-  ERROR_CHECKING(closedir(proc_dir));
+  int result_close = close(dir_fd);
+  ERROR_CHECK(result_close == -1);
   return;	
 }
 

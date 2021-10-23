@@ -1,47 +1,35 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <sys/stat.h>
 #include "error.hpp"
 
 void Fill_path(char *path, const char *dir_name)
-{  
-  if (path == NULL)
-  { 
-    ERROR("got NULL path");
-    return;
-  }
-
-  if (dir_name == NULL)
-  { 
-    ERROR("got NULL dir_name");
-    return;
-  }
-
+{ 
   sprintf(path, "/proc/%s/stat", dir_name);
   return;
 }
 
 void Print_stat(const char *path)
 {
-  if (path == NULL)
-  { 
-    ERROR("got NULL path");
-    return;
-  }
-
   char name[PATH_MAX]{0};
   char test[PATH_MAX]{0};
   char state = 0;
   int  pid   = 0;
   int  ppid  = 0;
 
-  ERROR_CHECKING(FILE *file = fopen(path, "r"));
+  FILE *file = fopen(path, "r");
+  ERROR_CHECK(file == NULL);
   int args = fscanf(file, "%d %[^)]%[^ ] %c %d", &pid, name, test, &state, &ppid);
   if (args != 5)
   {
     ERROR("Read not enough arguements");
   }
-  ERROR_CHECKING(fclose(file));
+
+  int result_fclose = fclose(file);
+  ERROR_CHECK(result_fclose != 0);
 
   printf("%5d %5d %5c %s\n", pid, ppid, state, name + 1);
   return;
@@ -49,9 +37,17 @@ void Print_stat(const char *path)
 
 void My_ps()
 {
-  printf(" PID PPID State Name\n");
-  ERROR_CHECKING(DIR *proc_dir = opendir("/proc"));
-  ERROR_CHECKING(struct dirent *dir = readdir(proc_dir));
+  int dir_fd = open("/proc", O_RDONLY);
+  ERROR_CHECK(dir_fd == -1);
+
+  DIR *proc_dir = fdopendir(dir_fd);
+  ERROR_CHECK(proc_dir == NULL);
+
+  errno = 0;
+  struct dirent *dir = readdir(proc_dir);
+  ERROR_CHECK(dir == NULL && errno != 0);
+
+  printf("  PID  PPID State Name\n");
   while(dir != NULL)
   {
     if (dir->d_type == DT_DIR)
@@ -64,9 +60,12 @@ void My_ps()
         Print_stat(path);
       }
     }
-    ERROR_CHECKING(dir = readdir(proc_dir));
+    errno = 0;
+    dir = readdir(proc_dir);
+    ERROR_CHECK(dir == NULL && errno != 0);
   }
-  ERROR_CHECKING(closedir(proc_dir)); 
+  int result_close = close(dir_fd);
+  ERROR_CHECK(result_close == -1);
 }
 
 

@@ -1,36 +1,57 @@
 #include <stdio.h>
 #include <string.h>
 #include <dirent.h>
+#include "error.hpp"
 
 void Fill_path(char *path, const char *dir_name)
-{
-  strncpy(path, "/proc/", 6);
-  strncat(path, dir_name, PATH_MAX);
-  strncat(path, "/stat", 5);
+{  
+  if (path == NULL)
+  { 
+    ERROR("got NULL path");
+    return;
+  }
+
+  if (dir_name == NULL)
+  { 
+    ERROR("got NULL dir_name");
+    return;
+  }
+
+  sprintf(path, "/proc/%s/stat", dir_name);
   return;
 }
 
 void Print_stat(const char *path)
 {
+  if (path == NULL)
+  { 
+    ERROR("got NULL path");
+    return;
+  }
+
   char name[PATH_MAX]{0};
   char test[PATH_MAX]{0};
   char state = 0;
   int  pid   = 0;
   int  ppid  = 0;
 
-  FILE *file = fopen(path, "r");
-  fscanf(file, "%d %[^)]%[^ ] %c %d", &pid, name, test, &state, &ppid);
-  fclose(file);
+  ERROR_CHECKING(FILE *file = fopen(path, "r"));
+  int args = fscanf(file, "%d %[^)]%[^ ] %c %d", &pid, name, test, &state, &ppid);
+  if (args != 5)
+  {
+    ERROR("Read not enough arguements");
+  }
+  ERROR_CHECKING(fclose(file));
 
-  printf("%4d %4d %5c %s\n", pid, ppid, state, name + 1);
+  printf("%5d %5d %5c %s\n", pid, ppid, state, name + 1);
   return;
 }
 
 void My_ps()
 {
   printf(" PID PPID State Name\n");
-  DIR *proc_dir = opendir("/proc");
-  struct dirent *dir = readdir(proc_dir);
+  ERROR_CHECKING(DIR *proc_dir = opendir("/proc"));
+  ERROR_CHECKING(struct dirent *dir = readdir(proc_dir));
   while(dir != NULL)
   {
     if (dir->d_type == DT_DIR)
@@ -43,9 +64,9 @@ void My_ps()
         Print_stat(path);
       }
     }
-    dir = readdir(proc_dir);
+    ERROR_CHECKING(dir = readdir(proc_dir));
   }
-  closedir(proc_dir); 
+  ERROR_CHECKING(closedir(proc_dir)); 
 }
 
 

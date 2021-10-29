@@ -64,8 +64,6 @@ void Processing_ext2fs_fd_repeatable(int fd, const struct ext2_super_block *supe
 	unsigned int inode_count      = super_block->s_inodes_count;
 	unsigned int inodes_per_group = super_block->s_inodes_per_group;
 
-	printf("%d blocks with %d size in %d groups BPG %d\n", block_count, block_size, group_count, blocks_per_group);
-
 	char *data[group_count];
 	for (int i = 0; i < group_count; ++i)
 	{

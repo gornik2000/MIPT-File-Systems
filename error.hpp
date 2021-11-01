@@ -18,3 +18,10 @@
     exit(EXIT_FAILURE);                                                    \
   }
 
+#define ERRNO_MSG()                                         \
+	{                                                         \
+		int errno_saved = errno;                                \
+		fprintf(stderr, "%s:%s():%d: error: %s\n",              \
+		        __FILE__, __func__, __LINE__, strerror(errno)); \
+		errno = errno_saved;                                    \
+	}

@@ -1,345 +1,283 @@
-#include <stdio.h>
-#include <string.h>
+#include "ext2.hpp"
 
-#include <fcntl.h>
-#include <stdlib.h>
-#include <unistd.h>
-
-#include <fcntl.h>
-#include <sys/types.h>
-#include <sys/stat.h>
-
-//#include <linux/fs.h>
-//#include <linux/ext2_fs.h>
-
-#include "ext2_fs.h"
-
-#include "error.hpp"
-#include "malloc.hpp"
 //=======================================================================================
-const int BOOT_BLOCK_SIZE = 1024;
-const int BASE_BLOCK_SIZE = 1024;
-
-int Processing_ext2fs_fd_repeatable(int fd, const struct ext2_super_block *super_block);
-int Open_ext2fs(char *name, struct ext2_super_block *super_block);
-
-int           Inode_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int group_num, const struct ext2_inode *inode);
-int  Indirect_block_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int block_num, unsigned int  level, unsigned int mode);
-void          Dir_b_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int block_num);
-int           Block_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int block_num);
-struct ext2_inode *Inode_pos(const char  *data, unsigned int block_size, unsigned int inode_num, const struct ext2_group_desc *group);
-const char        *Block_pos(const char  *data, unsigned int block_size, unsigned int block);
-
-unsigned char Get_bit(const unsigned char *bitmap, unsigned int num);
-void       Print_type(unsigned int type);
-unsigned int Get_type(unsigned int mode);
-//=======================================================================================
-int main(int argc, char *argv[])
-{
-	if (argc != 2)
-	{
-		printf("Try to launch again with 1 argument: ext2fs name\n");
-		return -1;
-	}
-	
-	struct ext2_super_block super_block;
-	int ext2fs_fd = Open_ext2fs(argv[1], &super_block);
-	if (ext2fs_fd == 0) 
-	{
-		printf("%s is not an ext2 filesystem\n", argv[1]);
-		return 0;
-	}
-	if (ext2fs_fd == -1)
-	{
-		printf("Something got wrong in Open_ext2fs(), check stderr for info\n");
-		return -1;
-	}
-
-	int result = Processing_ext2fs_fd_repeatable(ext2fs_fd, &super_block);
-	if (result == -1)
-	{
-		printf("Something got wrong in Processing_ext2fs_fd_repeatable(), check stderr for info\n");
-	}
-	close(ext2fs_fd);
-	return 0;
-}
-//=======================================================================================
-int Processing_ext2fs_fd_repeatable(int fd, const struct ext2_super_block *super_block)
-{
-	unsigned int block_size       = BASE_BLOCK_SIZE << super_block->s_log_block_size;
-	unsigned int block_count      = super_block->s_blocks_count;
-	unsigned int blocks_per_group = super_block->s_blocks_per_group;
-
-	unsigned int group_size       = block_size * blocks_per_group;
-	unsigned int group_count      = 1 + (block_count - 1) / (blocks_per_group);
-
-	unsigned int inode_count      = super_block->s_inodes_count;
-	unsigned int inodes_per_group = super_block->s_inodes_per_group;
-
-	char *data[group_count];
-	for (int i = 0; i < group_count; ++i)
-	{
-		data[i] = (char *)xzmalloc(group_size);
-	}
-
-	off_t lseek_result = lseek(fd, BOOT_BLOCK_SIZE, SEEK_SET); // go to first SB
-	if (lseek_result == -1)
-	{
-		ERRNO_MSG();
-		return -1;
-	}
-
-	for (int i = 0; i < group_count; ++i)
-	{
-		ssize_t read_result = read(fd, data[i], group_size); // get each group data
-		if (read_result == -1)
-		{
-			ERRNO_MSG();
-			return -1;
-		}
-	}
-
-	printf(" # This function prints file data accroding to it's inode num\n");
-	printf(" # Write required inode num or write 0 or less to quit\n");
-	int inode_num = 1;
-	char buf_string[256]{0};
-
-	//for (inode_num = 1; inode_num < inode_count / 3 * 2; ++inode_num)
-	while (true)
-	{
-	  printf(" >> ");
-	  scanf("%s", buf_string);
-	  int scanned = sscanf(buf_string, "%d", &inode_num);
-
-	  if (inode_num <= 0) break;
-
-		if (scanned != 1)
-		{
-			printf(" # Inode num is not a number, try again\n");
-			continue;
-		}
-		printf("%d\n", inode_num);
-		if (inode_num > inode_count)
-		{
-			printf(" # Inode num %d is bigger than inode count %d, try smaller number\n", inode_num, inode_count);
-			continue;
-		}
-
-		unsigned int inode_group = (inode_num - 1) / inodes_per_group;
-		unsigned int inode_index = (inode_num - 1) % inodes_per_group + 1;
-		ext2_group_desc *bg_headers = (ext2_group_desc *)Block_pos(data[inode_group], block_size, 2);
-
-		unsigned char *inode_bitmap = (unsigned char *)Block_pos(data[inode_group], block_size, bg_headers->bg_inode_bitmap);
-		if (!Get_bit(inode_bitmap, inode_index)) // if enode is free
-		{
-			printf(" # Inode with num %d is free\n", inode_num);
-			continue;
-		}
-
-		struct ext2_inode *inode = Inode_pos(data[inode_group], block_size, inode_index, bg_headers);
-		int inode_result = Inode_out(data, block_size, blocks_per_group, inode_group, inode);
-		if (inode_result == -1)
-		{
-			ERRNO_MSG();
-			return -1;
-		}
-	}
-
-	for (int i = 0; i < group_count; ++i)
-	{
-		free(data[i]);
-	}
-	printf(" # Function finished\n");
-	return 0;
-}
-
 int Open_ext2fs(char *name, struct ext2_super_block *super_block)
 {
 	int ext2fs_fd = open(name, O_RDONLY);
 	if (ext2fs_fd == -1)
 	{
-		ERRNO_MSG();
-		return -1;
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		return -err_num;
 	}
 
 	off_t lseek_result = lseek(ext2fs_fd, BOOT_BLOCK_SIZE, SEEK_SET); // skip boot block
 	if (lseek_result == -1)
 	{
-		ERRNO_MSG();
-		return -1;
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		close(ext2fs_fd);
+		return -err_num;
 	}
 
 	ssize_t read_result = read(ext2fs_fd, super_block, sizeof(*super_block)); // get SB
 	if (read_result == -1)
 	{
-		ERRNO_MSG();
-		return -1;
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		close(ext2fs_fd);
+		return -err_num;
 	}
 
 	if (super_block->s_magic != EXT2_SUPER_MAGIC) // if not a ext2 retry
 	{
+		int err_num = ENEXT2;
+		ERRNO_MSG(err_num)
 		close(ext2fs_fd);
-		return 0;
+		return -err_num;
 	}
 	return ext2fs_fd;
 }
-
-int Inode_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int group_num, const struct ext2_inode *inode)
+//=======================================================================================
+int Get_inode(int fd, struct ext2_inode *inode, const struct ext2_super_block *super_block, unsigned int inode_num)
 {
-	// type out
-	printf(" # This is ");
-	unsigned int mode = inode->i_mode;
-	Print_type(Get_type(mode));
-	printf("\n");
-
-	if (S_ISDIR(mode))
+	unsigned int inode_count = super_block->s_inodes_count;
+	if (inode_num > inode_count || inode_num <= 0)
 	{
-		// dir out
-		for (int i = 0; i < 12; ++i)
-		{
-			unsigned int block_num = inode->i_block[i];
-			Dir_b_out(data, block_size, blocks_per_group, block_num);
-		}
-	}
-	else
-	{
-		// file out
-		unsigned int size = inode->i_blocks * 512 / block_size; // because contain 512 byte blocks num
-		printf(" # It contains %d blocks\n", size);
-		if (size == 0)
-			return 0;
-
-		printf(" << \n");
-		for (int i = 0; i < 12; ++i) // out with no indirent blocks
-		{
-			unsigned int block_num = inode->i_block[i];
-			int result_out = Block_out(data, block_size, blocks_per_group, block_num);
-			if (result_out == -1)
-			{
-				ERRNO_MSG();
-				return -1;
-			}
-		}
+		int err_num = EBADINODENUM;
+		ERRNO_MSG(err_num);
+		return -err_num;
 	}
 
-	unsigned int i_block_num = inode->i_block[12];
-	int result_out = Indirect_block_out(data, block_size, blocks_per_group, i_block_num, 1, mode);
-	if (result_out == -1)
+	unsigned int block_size       = BASE_BLOCK_SIZE << super_block->s_log_block_size;
+	unsigned int blocks_per_group = super_block->s_blocks_per_group;
+
+	unsigned int inodes_per_group = super_block->s_inodes_per_group;
+	unsigned int inode_group_num  = (inode_num - 1) / inodes_per_group;
+	unsigned int inode_group_ind  = (inode_num - 1) % inodes_per_group + 1;
+		
+	// get ext2 group desc
+	char group_block[block_size]{0};
+	int read_result = Block_read(fd, group_block, block_size, block_size, inode_group_num * blocks_per_group + 2);
+	if (read_result < 0)
 	{
-		ERRNO_MSG();
-		return -1;
+		ERRNO_MSG(-read_result);
+		return read_result;
 	}
-	
-	i_block_num = inode->i_block[13];
-	result_out = Indirect_block_out(data, block_size, blocks_per_group, i_block_num, 2, mode);
-	if (result_out == -1)
+	ext2_group_desc *bg_headers = (ext2_group_desc *)group_block;
+
+	// get inode bitmap 
+	char inode_bitmap_block[block_size]{0};
+	read_result = Block_read(fd, inode_bitmap_block, block_size, block_size, bg_headers->bg_inode_bitmap);
+	if (read_result < 0)
 	{
-		ERRNO_MSG();
-		return -1;
+		ERRNO_MSG(-read_result);
+		return read_result;
 	}
 
-	i_block_num = inode->i_block[14];
-	result_out = Indirect_block_out(data, block_size, blocks_per_group, i_block_num, 3, mode);
-	if (result_out == -1)
+	unsigned int group_start = inode_group_num * blocks_per_group;
+		
+	read_result = Inode_read(fd, inode, block_size, bg_headers->bg_inode_table, group_start, inode_group_ind);
+	if (read_result < 0)
 	{
-		ERRNO_MSG();
-		return -1;
+		ERRNO_MSG(-read_result);
+		return read_result;
 	}
 
-	printf("\n");
-	return 0;
+	return Get_bit(inode_bitmap_block, inode_group_ind);	
 }
 
-int Indirect_block_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int block_num, unsigned int level, unsigned int mode)
+int Dir_out(int fd, unsigned int block_size, const struct ext2_inode *inode)
 {
-	if (block_num == 0) return 0;
-	unsigned int block_count = block_size / 4; // 4 = sizeof(int)
-	unsigned int group_num = (block_num - 1) / blocks_per_group;
-	unsigned int block_ind = (block_num - 1) % blocks_per_group + 1;
+	unsigned int size = Get_file_size(inode);
+	if (size == 0)
+		return 0;
 
-	char is_dir = S_ISDIR(mode);
-
-	unsigned int *block_num_ptr = (unsigned int *)Block_pos(data[group_num], block_size, block_ind);
-	for (int i = 0; i < block_count; ++i, ++block_num_ptr)
+	char *dir_data = (char *)xzmalloc(size * block_size);
+	int read_result = File_read(fd, dir_data, size * block_size, block_size, inode);
+	if (read_result < 0)
 	{
-		unsigned int new_block_num = *block_num_ptr;
-		if (new_block_num == 0) return 0;
-
-		if (level > 1)
-		{
-			int result_out = Indirect_block_out(data, block_size, blocks_per_group, new_block_num, level - 1, mode);
-			if (result_out == -1)
-			{
-				ERRNO_MSG();
-				return -1;
-			}
-		}
-		else if (level == 1)
-		{
-			if (is_dir)
-			{
-				Dir_b_out(data, block_size, blocks_per_group, new_block_num);
-			}
-			else
-			{
-				int result_out = Block_out(data, block_size, blocks_per_group, new_block_num);
-				if (result_out == -1)
-				{
-					ERRNO_MSG();
-					return -1;
-				}
-			}
-		}
+		ERRNO_MSG(-read_result); 
+		free(dir_data);
+		return read_result;
 	}
 
-	return 0;
-}
-
-void Dir_b_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int block_num)
-{
-	if (block_num == 0) return;
-	unsigned int group_num = (block_num - 1) / blocks_per_group;
-	unsigned int block_ind = (block_num - 1) % blocks_per_group + 1;
-
-	struct ext2_dir_entry_2 *entry = (struct ext2_dir_entry_2 *)Block_pos(data[group_num], block_size, block_ind);
-	unsigned int size = 0;
-	while ((size < block_size) && (entry->inode))
+	char *entry_pos = dir_data;
+	struct ext2_dir_entry_2 *entry = (struct ext2_dir_entry_2 *)entry_pos;
+	while ((size < read_result) && (entry->inode))
 	{
-		printf(" #	Inode num %d name '%s' type ", entry->inode, entry->name);
+		printf(" # \tInode num %5d name '", entry->inode);
+		
+		// name out, using %c because there is no guarantee of \0 at the end
+		int name_len = entry->name_len;
+		char *name   = entry->name;
+		for (int i = 0; i < name_len; ++i, ++name)
+			printf("%c", *name);
+
+		printf("' type ");
 		Print_type(entry->file_type);
 		printf("\n");
 
-		entry += entry->rec_len;
-		size  += entry->rec_len;
+		entry_pos += entry->rec_len;
+		size      += entry->rec_len;
+		entry = (struct ext2_dir_entry_2 *)entry_pos;
 	}
-	return;
+
+	free(dir_data);
+	return read_result;
 }
 
-int Block_out(char **data, unsigned int block_size, unsigned int blocks_per_group, unsigned int block_num)
+int File_out(int fd, unsigned int block_size, const struct ext2_inode *inode)
 {
-	if (block_num == 0) return 0;
-	unsigned int group_num = (block_num - 1) / blocks_per_group;
-	unsigned int block_ind = (block_num - 1) % blocks_per_group + 1;
-	int write_result = write(STDOUT_FILENO, Block_pos(data[group_num], block_size, block_ind), block_size); // block out
-	if (write_result == -1) 
+	int size = Get_file_size(inode);
+	char *buffer = (char *)xzmalloc(size);
+	int read_result = File_read(fd, buffer, size, block_size, inode);
+	if (read_result < 0)
 	{
-		ERRNO_MSG();
-		return -1;
+		ERRNO_MSG(-read_result);
+		free(buffer); 
+		return read_result;
 	}
+	ssize_t write_result = write(STDOUT_FILENO, buffer, read_result);
+	if (write_result == -1)
+	{
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		free(buffer);
+		return -err_num;
+	}
+	free(buffer);
 	return write_result;
 }
 
-struct ext2_inode *Inode_pos(const char *data, unsigned int block_size, unsigned int inode_num, const struct ext2_group_desc *group)
+int File_read(int fd, char *buffer, unsigned int max_size, unsigned int block_size, const struct ext2_inode *inode)
 {
-	return (ext2_inode *)(Block_pos(data, block_size, group->bg_inode_table) + (inode_num - 1) * sizeof(struct ext2_inode));
+	if (inode->i_blocks == 0)
+		return 0; //empty file
+
+	// read data
+	unsigned int size = 0;
+	for (int i = 0; i < 15; ++i)
+	{
+		if (max_size == 0) 
+			return size; // buffer is full
+
+		unsigned int block_num = inode->i_block[i];
+		int read_result = 0;
+		if (i < 12)
+			read_result = Block_read(fd, buffer, fmin(block_size, max_size), block_size, block_num); // not indirrect read
+		else
+			read_result = I_block_read(fd, buffer, max_size, block_size, block_num, i - 11); // indirrect read
+
+		if (read_result < 0)
+		{
+			ERRNO_MSG(-read_result); 
+			return read_result; // return error num
+		}
+
+		buffer   += read_result;
+		size     += read_result;
+		max_size -= read_result;
+	}
+
+	return size;
 }
 
-const char *Block_pos(const char *data, unsigned int block_size, unsigned int block)
+int I_block_read(int fd, char *buffer, unsigned int max_size, unsigned int block_size, unsigned int block_num, unsigned int level)
 {
-	return data + (block - 1) * block_size;
+	if (block_num == 0)
+		return 0;
+
+	// read indirrect block
+	char i_block[block_size];
+	int read_result = Block_read(fd, i_block, block_size, block_size, block_num);
+	if (read_result < 0)
+	{
+		ERRNO_MSG(-read_result);
+		return read_result;
+	}
+
+	unsigned int size = 0;
+	unsigned int block_count = block_size / 4;
+	unsigned int *block_num_ptr = (unsigned int *)i_block;
+	for (int i = 0; i < block_count; ++i, ++block_num_ptr)
+	{
+		if (max_size == 0)
+			return size; // buffer is full
+
+		unsigned int new_block_num = *block_num_ptr;
+		if (new_block_num == 0) 
+			return size;
+
+		int read_result = 0;
+		if (level > 1)
+			read_result = I_block_read(fd, buffer, max_size, block_size, new_block_num, level - 1);
+		else if (level == 1)
+			read_result = Block_read(fd, buffer, fmin(block_size, max_size), block_size, new_block_num);
+
+		if (read_result == -1)
+		{
+			ERRNO_MSG(-read_result);
+			return read_result; // return error num
+		}
+
+		buffer   += read_result;
+		size     += read_result;
+		max_size -= read_result;
+	}
+
+	return 0;
 }
 
-unsigned char Get_bit(const unsigned char *bitmap, unsigned int num)
+int Block_read(int fd, char *buffer, unsigned int max_size, unsigned int block_size, unsigned int block_num)
+{
+	off_t lseek_result = lseek(fd, BOOT_BLOCK_SIZE + (block_num - 1) * block_size, SEEK_SET);
+	if (lseek_result == -1)
+	{
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		return -err_num;
+	}
+
+	ssize_t read_result = read(fd, buffer, max_size);
+	if (read_result == -1)
+	{
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		return -err_num;
+	}
+
+	return read_result;
+}
+
+int Inode_read(int fd, struct ext2_inode *inode, unsigned int block_size, unsigned int i_table_pos, unsigned int group_start, unsigned int inode_index)
+{
+	off_t lseek_result = lseek(fd, BOOT_BLOCK_SIZE + (i_table_pos + group_start - 1) * block_size   \
+	                           + (inode_index - 1) * sizeof(struct ext2_inode), SEEK_SET);
+	if (lseek_result == -1)
+	{
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		return -err_num;
+	}
+
+	ssize_t read_result = read(fd, inode, sizeof(struct ext2_inode));
+	if (read_result == -1)
+	{
+		int err_num = errno;
+		ERRNO_MSG(err_num);
+		return -err_num;
+	}
+
+	return read_result;
+}
+//=======================================================================================
+unsigned int Get_file_size(const struct ext2_inode *inode)
+{
+	return inode->i_blocks * 512; // i_blocks is in 512 byte blocks
+}
+
+unsigned char Get_bit(const char *bitmap, unsigned int num)
 {
 	unsigned int byte = num / 8;
 	unsigned int bit  = num % 8;

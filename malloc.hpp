@@ -1,7 +1,9 @@
-#ifndef _MY_XMALLOC
+#ifndef MY_MALLOC_HPP
+#define MY_MALLOC_HPP
 
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 
 #define BUG_ON(condition, action) if (condition) action;
 
@@ -14,22 +16,7 @@
 	}                                                             \
 	while (0);
 
-void *xmalloc(size_t size)
-{
-	void *ret = malloc(size);
-	BUG_ON(ret == 0, OOM());
+void *xmalloc(size_t size);
+void *xzmalloc(size_t size);
 
-	return ret;
-}
-
-void *xzmalloc(size_t size)
-{
-	void *ret = malloc(size);
-	BUG_ON(ret == 0, OOM());
-
-	memset(ret, 0, size);
-	return ret;
-}
-
-#define _MY_XMALLOC value
-#endif
+#endif // MY_MALLOC_HPP
